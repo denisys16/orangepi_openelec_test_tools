@@ -1,0 +1,106 @@
+#!/bin/bash
+
+
+echo $'\n'CPU stress test, which is doing JPEG decoding by libjpeg-turbo
+echo at different cpufreq operating points.$'\n'
+
+
+cores="0 1 2 3"
+
+for core in $cores
+do
+	echo $'\n'$'\n' ---===   Testing CPU $core   ===---$'\n'
+
+	freq_max=`cat /sys/devices/system/cpu/cpu$core/cpufreq/scaling_max_freq`
+    freq_min=`cat /sys/devices/system/cpu/cpu$core/cpufreq/scaling_min_freq`
+    #freq_max=`cat /sys/devices/system/cpu/cpu$core/cpufreq/cpuinfo_max_freq`
+    #freq_min=`cat /sys/devices/system/cpu/cpu$core/cpufreq/cpuinfo_min_freq`
+
+    echo Testing CPU clock frequencies between $(( $freq_min / 1000 )) MHz and $(( $freq_max / 1000 )) MHz$'\n'	
+
+	scaling_governor=`cat /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor`
+	echo Current governor is $scaling_governor
+
+	echo Set governor to userspace for testing...
+	echo userspace > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor
+	test_governor=`cat /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor`
+	echo Current governor is $test_governor$'\n'
+
+
+
+
+	time_in_state=`cat /sys/devices/system/cpu/cpu$core/cpufreq/stats/time_in_state`
+	is_state=1
+	unset freqs
+	for state in $time_in_state
+	do
+		if [ $is_state -eq 1 ]
+		then
+			freqs="$freqs $state"
+			is_state=0
+		else
+			is_state=1
+		fi
+	done
+
+	for freq in $freqs
+	do
+		skipped=0
+
+		if [ $freq -lt $freq_min ]
+		then
+			skipped=1
+		fi
+
+		if [ $freq -gt $freq_max ]
+		then
+			skipped=1
+		fi
+
+		freq_val=$(printf '%4s' $(( $freq / 1000 )) )
+
+		printf "$freq_val MHz ...." 
+
+		if [ $skipped -eq 0 ]
+		then
+		    echo $freq > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_setspeed
+
+		    failed=0
+
+		    a=0
+			while [ $a -lt 60 ]
+			do
+   				a=$(( $a + 1 ))
+
+   				sum=`./taskset -c $core ./djpeg test.jpg | md5sum`
+   	        	if [ "$sum" != "47ba6737d91be2584e9942b269c2f318  -" ]
+   	        	then
+              		failed=1
+      			fi
+			done
+
+
+
+      		if [ $failed -eq 0 ]
+   	        then
+              	printf " PASSED\n"
+      		else
+      			printf " FAILED\n"
+      		fi
+
+
+		else
+			printf " SKIPPED\n"
+		fi
+		
+	done
+
+
+   	echo Restore governor to $scaling_governor...
+	echo $scaling_governor > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor
+	test_governor=`cat /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor`
+	echo Current governor is $test_governor
+
+	echo $freq_max > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_max_freq
+    echo $freq_min > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_min_freq
+done
